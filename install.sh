@@ -1,14 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-echo "                                         "
-echo "  _____ ____ _______  _             _    "
-echo " |_   _/ __ \\__   __|| | installer | |   "
-echo "   | || |  | | | |___| |_ __ _  ___| | __"
-echo "   | || |  | | | / __| __/ _\` |/ __| |/ /"
-echo "  _| || |__| | | \\__ \\ || (_| | (__|   < "
-echo " |_____\\____/  |_|___/\\__\\__,_|\\___|_|\\_\\"
-echo "                                         "
-echo "                                         "
+# version - MUST be exactly 7 characters!
+UPDATE="2026v01"
 
 #----------------------------------------------------------------------
 # The intention of this script is that it should be able to be run
@@ -22,16 +15,17 @@ echo "                                         "
 [ "$EUID" -eq 0 ] && echo "This script should NOT be run using sudo" && exit 1
 
 # the name of this script is
-SCRIPT=$(basename "$0")
+SCRIPT=$(basename "${0}")
 
-# this script should be run without arguments
-[ $# -ne 0 ] && echo "$SCRIPT parameter(s) $@ ignored"
+# where is this script is running?
+WHERE=$(dirname "$(realpath "$0")")
 
-# assumption(s) which can be overridden
-IOTSTACK=${IOTSTACK:-"$HOME/IOTstack"}
-
-# form absolute path
-IOTSTACK=$(realpath "$IOTSTACK")
+# if this script looks like it is running in a clone (or unzip) of
+# IOTstack then base operations there, otherwise default to the
+# standard location of ~/IOTstack. Either way, permit override by
+# prepending IOTSTACK=path to the script call.
+[ -d "$WHERE/.templates" -a -d "$WHERE/docs" ] && PROJECT="$WHERE" || PROJECT="$HOME/IOTstack"
+IOTSTACK=${IOTSTACK:-"$PROJECT"}
 
 # derived path(s) - note that the menu knows about most of these so
 # they can't just be changed without a lot of care.
@@ -56,7 +50,7 @@ COMPOSE_SYMLINK_PATH="/usr/local/bin/docker-compose"
 CMDLINE_OPTIONS="cgroup_memory=1 cgroup_enable=memory"
 
 # dependencies installed via apt
-APT_DEPENDENCIES="curl git jq python3-pip python3-dev python3-virtualenv uuid-runtime whiptail"
+APT_DEPENDENCIES="curl git jq pwgen python3-pip python3-dev python3-virtualenv rsync sqlite3 uuid-runtime whiptail"
 
 # minimum version requirements
 DOCKER_VERSION_MINIMUM="24"
@@ -64,11 +58,131 @@ COMPOSE_VERSION_MINIMUM="2.20"
 PYTHON_VERSION_MINIMUM="3.9"
 
 # best-practice for group membership
-DESIRED_GROUPS="docker bluetooth"
+DESIRED_GROUPS="docker bluetooth dialout"
 
 # what to do at script completion (reboot takes precedence)
 REBOOT_REQUIRED=false
 LOGOUT_REQUIRED=false
+
+#----------------------------------------------------------------------
+# versioning functions
+#----------------------------------------------------------------------
+
+# version_json()
+#
+# Arguments
+#    $1 exit code
+# Returns:
+#    JSON string with version, commit ID and exit code
+# Note:
+#    If $SCRIPT is not under Git control (eg a zip download of IOTstack)
+#    then the commit field will be an empty string.
+#
+version_json() {
+	local commitID=$(git -C "${IOTSTACK}" log -n 1 --pretty=format:%H -- "${SCRIPT}" 2>/dev/null)
+	echo "{\"version\": \"${UPDATE}\", \"commit\": \"${commitID}\", \"exitCode\": ${1}}"
+}
+
+
+# should_run_installer()
+#
+# Arguments
+#    none
+# Returns
+#    "false" or "true"
+# Theory:
+#    Under normal conditions, running install.sh will result in the
+#    hint file (.new_install) having the JSON string returned by
+#    version_json(), which contains the current version number and
+#    current commit ID of install.sh, plus an exit code of zero.
+#
+#    If IOTstack is downloaded as a zip rather than a clone, the commit
+#    ID will be null but, other than placing a heavier reliance on the
+#    version number **changing**, that does not actually matter.
+#
+#    Historically, .new_install has evolved through three generations:
+#
+#    Gen 1: A touch file where its mere existence signalled that
+#           install.sh had been run.
+#    Gen 2: A file recording the exit code of the most-recent run. The
+#           menu has never actually taken advantage of this.
+#    Gen 3: The JSON string returned by version_json().
+#
+#    This function will return "true" if any of the following is true:
+#
+#    1. install.sh has never been run to perform an installation (or
+#       PiBuilder has not faked things on this script's behalf). In
+#       other words, this is the situation where .new_install is absent.
+#    2. The last run of install.sh either produced a Gen 2 file
+#       (irrespective of the exit code value) or a Gen 3 file with a
+#       non-zero exit code.
+#    3. Either/both the embedded version number or commit ID have
+#       changed as a result of an update.
+#
+should_run_installer() {
+	# does the hint file exist and is it non-empty?
+	if [ -s "${IOTSTACK_INSTALLER_HINT}" ] ; then
+		# yes! compare content
+		if [ "$(cat "${IOTSTACK_INSTALLER_HINT}")" = "$(version_json 0)" ] ; then
+			echo "false"
+			return
+		fi
+	fi
+	echo "true"
+}
+
+
+#----------------------------------------------------------------------
+# arguments
+#----------------------------------------------------------------------
+
+# any arguments passed on command-line?
+if [ $# -gt 0 ] ; then
+
+	# vector on command verb
+	case "${1}" in
+
+		"version" )
+			echo "$(version_json 0)"
+		;;
+
+		"should_run_installer" )
+			echo "$(should_run_installer)"
+		;;
+
+		*)
+			cat <<-HELP
+
+				Usage:
+				  ${SCRIPT} (with no arguments runs the installer)
+				  ${SCRIPT} version - returns JSON version string
+				  ${SCRIPT} should_run_installer - returns "false" or "true"
+				  ${SCRIPT} help - displays this menu
+
+			HELP
+		;;
+
+	esac
+
+	# normal exit (ie does not fall through to the menu)
+	exit 0
+
+fi
+
+
+#----------------------------------------------------------------------
+# main installer code
+#----------------------------------------------------------------------
+
+echo "                                         "
+echo "  _____ ____ _______  _  installer  _    "
+echo " |_   _/ __ \\__   __|| |  $UPDATE  | |  "
+echo "   | || |  | | | |___| |_ __ _  ___| | __"
+echo "   | || |  | | | / __| __/ _\` |/ __| |/ /"
+echo "  _| || |__| | | \\__ \\ || (_| | (__|   < "
+echo " |_____\\____/  |_|___/\\__\\__,_|\\___|_|\\_\\"
+echo "                                         "
+echo "                                         "
 
 #----------------------------------------------------------------------
 #						Check script dependencies
@@ -110,10 +224,13 @@ fi
 function handle_exit() {
 
 	# record the exit condition (if possible)
-	[ -d "$IOTSTACK" ] && echo "$1" >"$IOTSTACK_INSTALLER_HINT"
+	[ -d "$IOTSTACK" ] && echo "$(version_json $1)" >"$IOTSTACK_INSTALLER_HINT"
 
 	# inform the user
-	echo -n "$SCRIPT completed"
+	echo -n "install.sh completed"
+
+	# advise if should be re-run
+	[ $1 -ne 0 ] && echo -n " - but should be re-run"
 
 	# reboot takes precedence over logout
 	if [ "$REBOOT_REQUIRED" = "true" ] ; then
@@ -123,7 +240,16 @@ function handle_exit() {
 	elif [ "$LOGOUT_REQUIRED" = "true" ] ; then
 		echo " - a logout is required."
 		sleep 2
-		kill -HUP "$PPID"
+		# iterate ancestor processes
+		for ANCESTOR in $(ps -o ppid=) ; do
+			# find first process belonging to current user
+			if [ "$(ps -p $ANCESTOR -o user=)" = "$USER" ] ; then
+				# kill it
+				kill -HUP $ANCESTOR
+			fi
+		done
+		# should not reach this
+		sleep 2
 	fi
 
 	# exit as instructed
@@ -229,13 +355,6 @@ echo ""
 # is in the expected location, the necessary symlink can be created by
 # this script and then docker-compose will be installed "correctly".
 
-function is_running_OS_release() {
-	unset VERSION_CODENAME
-	[ -f "/etc/os-release" ] && eval $(grep "^VERSION_CODENAME=" /etc/os-release)
-	[ "$VERSION_CODENAME" = "$1" ] && return 0
-	return 1
-}
-
 function is_python_script() {
 	[ $(file -b "$1" | grep -c "^Python script") -gt 0 ] && return 0
 	return 1
@@ -305,13 +424,9 @@ else
 	echo "having installed docker and docker-compose without using the official"
 	echo "'convenience script'. You may be able to solve this problem by running"
 	if is_python_script "$COMPOSE_CMD_PATH" ; then
-		if is_running_OS_release bookworm ; then
-			echo "   \$ pip3 uninstall -y --break-system-packages docker-compose"
-			echo "   \$ sudo pip3 uninstall -y --break-system-packages docker-compose"
-		else
-			echo "   \$ pip3 uninstall -y docker-compose"
-			echo "   \$ sudo pip3 uninstall -y docker-compose"
-		fi
+		echo "   \$ export PIP_BREAK_SYSTEM_PACKAGES=1"
+		echo "   \$ pip3 uninstall -y docker-compose"
+		echo "   \$ sudo pip3 uninstall -y docker-compose"
 		echo "   (ignore any errors from those commands)"
 	else
 		echo "   \$ sudo apt purge -y docker-compose"
@@ -337,7 +452,6 @@ if [ ! -d "$IOTSTACK" ] ; then
 	fi
 	if [ $? -eq 0 -a -d "$IOTSTACK" ] ; then
 		echo "IOTstack cloned successfully into $IOTSTACK"
-		mkdir -p "$IOTSTACK/backups" "$IOTSTACK/services"
 	else
 		echo "Unable to clone IOTstack (likely a git or network error)"
 		handle_exit 1
@@ -346,9 +460,17 @@ else
 	echo -e "\n$IOTSTACK already exists - no need to clone from GitHub"
 fi
 
+# ensure backups and services directories exist and are owned by $USER
+# https://github.com/SensorsIot/IOTstack/issues/651#issuecomment-2525347511
+mkdir -p "$IOTSTACK/backups" "$IOTSTACK/services"
+sudo chown -R "$USER:$USER" "$IOTSTACK/backups" "$IOTSTACK/services"
+# but, if the influxdb backup dir already exists, put it back to root
+[ -d "$IOTSTACK/backups/influxdb" ] && sudo chown -R "root:root" "$IOTSTACK/backups/influxdb"
+
 # initialise docker-compose global environment file with system timezone
+# see https://git.gsi.de/chef/cookbooks/sys/-/issues/54
 if [ ! -f "$IOTSTACK_ENV" ] || [ $(grep -c "^TZ=" "$IOTSTACK_ENV") -eq 0 ] ; then
-	echo "TZ=$(cat /etc/timezone)" >>"$IOTSTACK_ENV"
+	echo "TZ=$(timedatectl show --value --property=Timezone)" >>"$IOTSTACK_ENV"
 fi
 
 #----------------------------------------------------------------------
@@ -384,12 +506,8 @@ fi
 # implement menu requirements
 if [ -e "$IOTSTACK_MENU_REQUIREMENTS" ] ; then
 	echo -e "\nChecking and updating IOTstack dependencies (pip)" 
-	unset PYTHON_OPTIONS
-	if is_running_OS_release bookworm ; then
-		echo "Note: pip3 installs bypass externally-managed environment check"
-		PYTHON_OPTIONS="--break-system-packages"
-	fi
-	pip3 install -U $PYTHON_OPTIONS -r "$IOTSTACK_MENU_REQUIREMENTS"
+	echo "Note: pip3 installs bypass externally-managed environment check"
+	PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install -U -r "$IOTSTACK_MENU_REQUIREMENTS"
 fi
 
 # trigger re-creation of venv on next menu launch. Strictly speaking,
