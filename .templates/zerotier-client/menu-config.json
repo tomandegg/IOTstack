@@ -1,0 +1,11 @@
+{
+   "configure": null,
+   "dependencies": [],
+   "description": "Personal VPN (client only)",
+   "environment": [],
+   "excluded_by": ["zerotier-router"],
+   "install": [
+      { "template": "service.yml", "service": "service.yml", "tracked": true }
+   ],
+   "service": "zerotier-client"
+}

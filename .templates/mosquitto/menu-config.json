@@ -1,0 +1,11 @@
+{
+   "configure": null,
+   "dependencies": [],
+   "description": "Eclipse-Mosquitto MQTT broker",
+   "environment": [],
+   "excluded_by": ["mqttctl"],
+   "install": [
+      { "template": "service.yml", "service": "service.yml", "tracked": true }
+   ],
+   "service": "mosquitto"
+}
